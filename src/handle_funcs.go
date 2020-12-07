@@ -130,7 +130,12 @@ func partialRequestResponse(c *gin.Context) {
 		return
 	}
 
-	sagaI,_ := sagas.Load(resp.SagaId)
+	sagaI, err := sagas.Load(resp.SagaId)
+	if !err {
+		c.Status(http.StatusOK)
+		return
+	}
+
 	saga := sagaI.(Saga)
 	saga.Leader = getIpFromAddr(c.Request.RemoteAddr)
 
