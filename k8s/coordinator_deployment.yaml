@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
       - name: coordinator
-        image: abrevnov/yac
-        imagePullPolicy: Always
+        image: abrevnov/yac:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:

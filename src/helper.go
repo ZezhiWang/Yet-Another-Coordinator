@@ -152,14 +152,14 @@ func sendCompensatingRequests(sagaId string, maxTier int, subCluster []string) {
 
 		// wait for successes from each partial request, quit on failure
 		// TODO: add retries / timeouts
-		cnt := 0
-		for cnt < len(requestsMap) {
+		for cnt := 0; cnt < len(requestsMap); cnt++ {
 			status := <-success
 			if status.ok {
 				updateSubCluster(sagaId, tier, status.reqID, true, Success, subCluster)
 				cnt++
+			} else {
+				log.Println(status.reqID, "unsuccessful")
 			}
-			// TODO: handle unsuccessful compensation
 		}
 	}
 }
@@ -210,21 +210,21 @@ func checkIfNewLeader() {
 	sagas.Range(func(key, value interface{}) bool {
 		s := value.(Saga)
 		if _, isIn := coordinatorSet[s.Leader]; !isIn {
-			newLeader, _ := ring.GetNode(s.Client)
+			newLeader, _ := ring.GetNode(key.(string))
 			s.Leader = newLeader
 
 			sagas.Store(key, s)
 
 			if newLeader == ip {
-				leadCompensation(s.Client, key.(string))
+				leadCompensation(key.(string))
 			}
 		}
 		return true
 	})
 }
 
-func leadCompensation(key, sagaId string) {
-	subCluster, _ := ring.GetNodes(key, subClusterSize)
+func leadCompensation(sagaId string) {
+	subCluster, _ := ring.GetNodes(sagaId, subClusterSize)
 
 	resp := make(chan MsgStatus)
 	for _, svr := range subCluster {

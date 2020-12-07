@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-var coordinators = []string{}
+var coordinators []string
 
 var ring = hashring.New(coordinators)
 
@@ -47,8 +47,8 @@ func main() {
 
 	router.GET("/", welcome)
 
-	router.POST("/saga", processSaga)
-	router.POST("/saga/cluster/:request", newSaga)
+	router.POST("/saga/:request", processSaga)
+	router.POST("/cluster/:request", newSaga)
 	router.PUT("/saga/partial", partialRequestResponse)
 	router.PUT("/saga/elect/:request", voteAbort)
 	router.DELETE("/saga/:request", delSaga)
