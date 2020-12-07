@@ -209,7 +209,7 @@ func checkIfNewLeader() {
 
 	sagas.Range(func(key, value interface{}) bool {
 		s := value.(Saga)
-		if _, isIn := coordinatorSet[s.Leader]; isIn {
+		if _, isIn := coordinatorSet[s.Leader]; !isIn {
 			newLeader, _ := ring.GetNode(s.Client)
 			s.Leader = newLeader
 

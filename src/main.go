@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"sort"
 	"time"
 
@@ -61,10 +62,11 @@ func updateCoordinatorsList() {
 	for {
 		time.Sleep(pollFrequency * time.Millisecond)
 
-		coordinators = pullCoordinators()
-		// update ring
-		ring = hashring.New(coordinators)
-		checkIfNewLeader()
+		newCoordinators := pullCoordinators()
+		if !reflect.DeepEqual(newCoordinators, coordinators) {
+			// update ring
+			ring = hashring.New(coordinators)
+			checkIfNewLeader()}
 	}
 }
 
