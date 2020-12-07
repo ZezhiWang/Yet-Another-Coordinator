@@ -37,9 +37,8 @@ func processSaga(c *gin.Context) {
 	}
 
 	reqID := xid.New().String()
-	sagasMutex.Lock()
-	sagas[reqID] = saga
-	sagasMutex.Unlock()
+
+	sagas.Store(reqID, saga)
 
 	// get sub cluster
 	servers, ok := ring.GetNodes(key, subClusterSize)
@@ -87,7 +86,7 @@ func processSaga(c *gin.Context) {
 			}
 		}
 
-		delete(sagas, reqID)
+		sagas.Delete(reqID)
 		c.Status(http.StatusBadRequest)
 	} else {
 		// reply success
@@ -104,7 +103,7 @@ func processSaga(c *gin.Context) {
 				cnt++
 			}
 		}
-		delete(sagas, reqID)
+		sagas.Delete(reqID)
 		// TODO: return with body
 		c.Status(http.StatusOK)
 	}
@@ -115,12 +114,8 @@ func newSaga(c *gin.Context) {
 
 	defer c.Request.Body.Close()
 	body, _ := ioutil.ReadAll(c.Request.Body)
-	saga := fromByteArray(body)
 
-	sagasMutex.Lock()
-	sagas[reqID] = saga
-	sagasMutex.Unlock()
-
+	sagas.Store(reqID, fromByteArray(body))
 	c.Status(http.StatusOK)
 }
 
@@ -135,7 +130,8 @@ func partialRequestResponse(c *gin.Context) {
 		return
 	}
 
-	saga := sagas[resp.SagaId]
+	sagaI,_ := sagas.Load(resp.SagaId)
+	saga := sagaI.(Saga)
 	saga.Leader = getIpFromAddr(c.Request.RemoteAddr)
 
 	targetPartialRequest = saga.Transaction.Tiers[resp.Tier][resp.ReqID]
@@ -146,23 +142,22 @@ func partialRequestResponse(c *gin.Context) {
 	}
 	saga.Transaction.Tiers[resp.Tier][resp.ReqID] = targetPartialRequest
 
-	sagasMutex.Lock()
-	sagas[resp.SagaId] = saga
-	sagasMutex.Unlock()
+	sagas.Store(resp.SagaId, saga)
 
 	c.Status(http.StatusOK)
 }
 
 func delSaga(c *gin.Context) {
 	reqID := c.Param("request")
-	delete(sagas, reqID)
+	sagas.Delete(reqID)
 	c.Status(http.StatusOK)
 }
 
 func voteAbort(c *gin.Context) {
 	reqID := c.Param("request")
-	if _, isIn := sagas[reqID]; isIn {
-		leader, _ := ring.GetNode(sagas[reqID].Client)
+	if sagaI, isIn := sagas.Load(reqID); isIn {
+		client := sagaI.(Saga).Client
+		leader, _ := ring.GetNode(client)
 		if leader == getIpFromAddr(c.Request.RemoteAddr) {
 			c.Status(http.StatusOK)
 			return

@@ -6,8 +6,7 @@ import (
 	"sync"
 )
 
-var sagas = make(map[string]Saga)
-var sagasMutex = sync.Mutex{}
+var sagas sync.Map
 
 type Status int
 

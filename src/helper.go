@@ -82,7 +82,8 @@ func sendMessage(reqID string, req Request, resp chan MsgStatus) {
 
 // Returns tier that needs to be rolled back to, nil on success
 func sendPartialRequests(sagaId string, subCluster []string) (int, bool) {
-	tiersMap := sagas[sagaId].Transaction.Tiers
+	sagaI, _ := sagas.Load(sagaId)
+	tiersMap := sagaI.(Saga).Transaction.Tiers
 
 	// since maps do not guarantee order, we get keys and sort them
 	tiers := make([]int, 0, len(tiersMap))
@@ -123,7 +124,8 @@ func sendPartialRequests(sagaId string, subCluster []string) (int, bool) {
 
 // Tier is highest tier through which (inclusive) we need to roll back
 func sendCompensatingRequests(sagaId string, maxTier int, subCluster []string) {
-	tiersMap := sagas[sagaId].Transaction.Tiers
+	sagaI, _ := sagas.Load(sagaId)
+	tiersMap := sagaI.(Saga).Transaction.Tiers
 
 	// since maps do not guarantee order, we get keys and sort them
 	tiers := make([]int, 0, len(tiersMap))
@@ -185,17 +187,18 @@ func updateSubCluster(sagaId string, tier int, reqID string, isComp bool, status
 		}
 	}
 
-	request := sagas[sagaId].Transaction.Tiers[tier][reqID]
+	sagaI,_ := sagas.Load(sagaId)
+	saga := sagaI.(Saga)
+	request := saga.Transaction.Tiers[tier][reqID]
 	if isComp {
 		request.CompReq.Status = Success
 		request.PartialReq.Status = Aborted
 	} else {
 		request.PartialReq.Status = Success
 	}
+	saga.Transaction.Tiers[tier][reqID] = request
 
-	sagasMutex.Lock()
-	sagas[sagaId].Transaction.Tiers[tier][reqID] = request
-	sagasMutex.Unlock()
+	sagas.Store(sagaId, saga)
 }
 
 func checkIfNewLeader() {
@@ -204,18 +207,20 @@ func checkIfNewLeader() {
 		coordinatorSet[c] = true
 	}
 
-	for id, s := range sagas {
-		if _, isIn := coordinatorSet[s.Leader]; !isIn {
+	sagas.Range(func(key, value interface{}) bool {
+		s := value.(Saga)
+		if _, isIn := coordinatorSet[s.Leader]; isIn {
 			newLeader, _ := ring.GetNode(s.Client)
 			s.Leader = newLeader
-			sagasMutex.Lock()
-			sagas[id] = s
-			sagasMutex.Unlock()
+
+			sagas.Store(key, s)
+
 			if newLeader == ip {
-				leadCompensation(s.Client, id)
+				leadCompensation(s.Client, key.(string))
 			}
 		}
-	}
+		return true
+	})
 }
 
 func leadCompensation(key, sagaId string) {
@@ -245,7 +250,8 @@ func leadCompensation(key, sagaId string) {
 	if ack < subClusterSize/2+1 {
 		return
 	} else {
-		tiersMap := sagas[sagaId].Transaction.Tiers
+		sagaI, _ := sagas.Load(sagaId)
+		tiersMap := sagaI.(Saga).Transaction.Tiers
 
 		maxTier := -1
 		for n := range tiersMap {
