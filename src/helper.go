@@ -228,7 +228,7 @@ func leadCompensation(key, sagaId string) {
 
 	resp := make(chan MsgStatus)
 	for _, svr := range subCluster {
-		go sendGetMsg(svr + "/saga/elect/" + sagaId, "", resp)
+		go sendPutMsg(svr + "/saga/elect/" + sagaId, "", make([]byte, 0), resp)
 	}
 
 	ack := 1
