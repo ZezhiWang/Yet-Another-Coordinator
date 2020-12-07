@@ -65,8 +65,10 @@ func updateCoordinatorsList() {
 		newCoordinators := pullCoordinators()
 		if !reflect.DeepEqual(newCoordinators, coordinators) {
 			// update ring
+			coordinators = newCoordinators
 			ring = hashring.New(coordinators)
-			checkIfNewLeader()}
+			checkIfNewLeader()
+		}
 	}
 }
 

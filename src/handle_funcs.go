@@ -20,7 +20,10 @@ func processSaga(c *gin.Context) {
 	key := getIpFromAddr(c.Request.RemoteAddr)
 	server, ok := ring.GetNode(key)
 	if ok == false {
-		log.Fatal("Insufficient Correct Nodes")
+		log.Println("Insufficient Correct Nodes")
+		log.Println(coordinators)
+		c.Status(http.StatusInternalServerError)
+		return
 	}
 
 	if server != ip {
@@ -43,7 +46,10 @@ func processSaga(c *gin.Context) {
 	// get sub cluster
 	servers, ok := ring.GetNodes(key, subClusterSize)
 	if ok == false {
-		log.Fatal("Insufficient Correct Nodes")
+		log.Println("Insufficient Correct Nodes")
+		log.Println(coordinators)
+		c.Status(http.StatusInternalServerError)
+		return
 	}
 
 	// send request to sub cluster
