@@ -86,9 +86,8 @@ func processSaga(c *gin.Context) {
 				cnt++
 			}
 		}
-		sagasMutex.Lock()
+
 		delete(sagas, reqID)
-		sagasMutex.Unlock()
 		c.Status(http.StatusBadRequest)
 	} else {
 		// reply success
@@ -105,9 +104,7 @@ func processSaga(c *gin.Context) {
 				cnt++
 			}
 		}
-		sagasMutex.Lock()
 		delete(sagas, reqID)
-		sagasMutex.Unlock()
 		// TODO: return with body
 		c.Status(http.StatusOK)
 	}
@@ -141,7 +138,6 @@ func partialRequestResponse(c *gin.Context) {
 	saga := sagas[resp.SagaId]
 	saga.Leader = getIpFromAddr(c.Request.RemoteAddr)
 
-	sagasMutex.Lock()
 	targetPartialRequest = saga.Transaction.Tiers[resp.Tier][resp.ReqID]
 	if resp.IsComp {
 		targetPartialRequest.CompReq.Status = resp.Status
@@ -149,6 +145,8 @@ func partialRequestResponse(c *gin.Context) {
 		targetPartialRequest.PartialReq.Status = resp.Status
 	}
 	saga.Transaction.Tiers[resp.Tier][resp.ReqID] = targetPartialRequest
+
+	sagasMutex.Lock()
 	sagas[resp.SagaId] = saga
 	sagasMutex.Unlock()
 
@@ -157,9 +155,7 @@ func partialRequestResponse(c *gin.Context) {
 
 func delSaga(c *gin.Context) {
 	reqID := c.Param("request")
-	sagasMutex.Lock()
 	delete(sagas, reqID)
-	sagasMutex.Unlock()
 	c.Status(http.StatusOK)
 }
 
