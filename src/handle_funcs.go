@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/xid"
 )
 
 func welcome(c *gin.Context) {
@@ -17,16 +16,20 @@ func welcome(c *gin.Context) {
 }
 
 func processSaga(c *gin.Context) {
-	key := getIpFromAddr(c.Request.RemoteAddr)
-	server, ok := ring.GetNode(key)
+	sagaId := c.Param("request")
+
+	server, ok := ring.GetNode(sagaId)
 	if ok == false {
-		log.Fatal("Insufficient Correct Nodes")
+		log.Println("Insufficient Correct Nodes")
+		log.Println(coordinators)
+		c.Status(http.StatusInternalServerError)
+		return
 	}
 
 	if server != ip {
-		log.Printf("%s, %s, %s, %d\n", key, ip, server, len(coordinators))
+		log.Printf("%s, %s, %s, %d\n", sagaId, ip, server, len(coordinators))
 		log.Println(coordinators)
-		c.Redirect(http.StatusTemporaryRedirect, server + "/saga")
+		c.Redirect(http.StatusTemporaryRedirect, server+"/saga/"+sagaId)
 		return
 	}
 
@@ -36,15 +39,15 @@ func processSaga(c *gin.Context) {
 		return
 	}
 
-	reqID := xid.New().String()
-	sagasMutex.Lock()
-	sagas[reqID] = saga
-	sagasMutex.Unlock()
+	sagas.Store(sagaId, saga)
 
 	// get sub cluster
-	servers, ok := ring.GetNodes(key, subClusterSize)
+	servers, ok := ring.GetNodes(sagaId, subClusterSize)
 	if ok == false {
-		log.Fatal("Insufficient Correct Nodes")
+		log.Println("Insufficient Correct Nodes")
+		log.Println(coordinators)
+		c.Status(http.StatusInternalServerError)
+		return
 	}
 
 	// send request to sub cluster
@@ -52,13 +55,13 @@ func processSaga(c *gin.Context) {
 	ack := make(chan MsgStatus)
 	for _, server := range servers {
 		if server != ip {
-			go sendPostMsg(server+"/saga/cluster/"+reqID, "", saga.toByteArray(), ack)
+			go sendPostMsg(server+"/cluster/"+sagaId, "", saga.toByteArray(), ack)
 		}
 	}
 
 	// wait for majority of ack
 	cnt := 1
-	for cnt < len(servers)/2+1 {
+	for cnt < subClusterSize/2+1 {
 		if (<-ack).ok {
 			cnt++
 		}
@@ -66,45 +69,45 @@ func processSaga(c *gin.Context) {
 
 	// execute partial requests
 	log.Println("Sending partial requests")
-	rollbackTier, rollback := sendPartialRequests(reqID, servers)
+	rollbackTier, rollback := sendPartialRequests(sagaId, servers)
 
 	if rollback == true {
 		// experiences failure, need to send compensating requests up to tier (inclusive)
 		log.Println("Rolling back", rollbackTier)
-		sendCompensatingRequests(reqID, rollbackTier, servers)
+		sendCompensatingRequests(sagaId, rollbackTier, servers)
 		// reply success
 		for _, server := range servers {
 			if server != ip {
-				go sendDelMsg(server+"/saga/"+reqID, "", ack)
+				go sendDelMsg(server+"/saga/"+sagaId, "", ack)
 			}
 		}
 
 		// wait for majority of ack
 		cnt := 1
-		for cnt < len(servers)/2+1 {
+		for cnt < subClusterSize/2+1 {
 			if (<-ack).ok {
 				cnt++
 			}
 		}
 
-		delete(sagas, reqID)
+		sagas.Delete(sagaId)
 		c.Status(http.StatusBadRequest)
 	} else {
 		// reply success
 		for _, server := range servers {
 			if server != ip {
-				go sendDelMsg(server+"/saga/"+reqID, "", ack)
+				go sendDelMsg(server+"/saga/"+sagaId, "", ack)
 			}
 		}
 
 		// wait for majority of ack
 		cnt := 1
-		for cnt < len(servers)/2+1 {
+		for cnt < subClusterSize/2+1 {
 			if (<-ack).ok {
 				cnt++
 			}
 		}
-		delete(sagas, reqID)
+		sagas.Delete(sagaId)
 		// TODO: return with body
 		c.Status(http.StatusOK)
 	}
@@ -115,18 +118,13 @@ func newSaga(c *gin.Context) {
 
 	defer c.Request.Body.Close()
 	body, _ := ioutil.ReadAll(c.Request.Body)
-	saga := fromByteArray(body)
 
-	sagasMutex.Lock()
-	sagas[reqID] = saga
-	sagasMutex.Unlock()
-
+	sagas.Store(reqID, fromByteArray(body))
 	c.Status(http.StatusOK)
 }
 
 func partialRequestResponse(c *gin.Context) {
 	var resp PartialResponse
-	var targetPartialRequest TransactionReq
 
 	body, _ := ioutil.ReadAll(c.Request.Body)
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -135,34 +133,37 @@ func partialRequestResponse(c *gin.Context) {
 		return
 	}
 
-	saga := sagas[resp.SagaId]
-	saga.Leader = getIpFromAddr(c.Request.RemoteAddr)
-
-	targetPartialRequest = saga.Transaction.Tiers[resp.Tier][resp.ReqID]
-	if resp.IsComp {
-		targetPartialRequest.CompReq.Status = resp.Status
-	} else {
-		targetPartialRequest.PartialReq.Status = resp.Status
+	sagaI, err := sagas.Load(resp.SagaId)
+	if !err {
+		c.Status(http.StatusOK)
+		return
 	}
-	saga.Transaction.Tiers[resp.Tier][resp.ReqID] = targetPartialRequest
 
-	sagasMutex.Lock()
-	sagas[resp.SagaId] = saga
-	sagasMutex.Unlock()
+	saga := sagaI.(Saga)
+	reqMap := saga.Transaction.Tiers[resp.Tier]
+	req := reqMap[resp.ReqID]
+	if resp.IsComp {
+		req.CompReq.Status = resp.Status
+	} else {
+		req.PartialReq.Status = resp.Status
+	}
+	reqMap[resp.ReqID] = req
+	saga.Transaction.Tiers[resp.Tier] = reqMap
 
+	sagas.Store(resp.SagaId, saga)
 	c.Status(http.StatusOK)
 }
 
 func delSaga(c *gin.Context) {
 	reqID := c.Param("request")
-	delete(sagas, reqID)
+	sagas.Delete(reqID)
 	c.Status(http.StatusOK)
 }
 
 func voteAbort(c *gin.Context) {
 	reqID := c.Param("request")
-	if _, isIn := sagas[reqID]; isIn {
-		leader, _ := ring.GetNode(sagas[reqID].Client)
+	if _, isIn := sagas.Load(reqID); isIn {
+		leader, _ := ring.GetNode(reqID)
 		if leader == getIpFromAddr(c.Request.RemoteAddr) {
 			c.Status(http.StatusOK)
 			return

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"sort"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-var coordinators = []string{}
+var coordinators []string
 
 var ring = hashring.New(coordinators)
 
@@ -46,8 +47,8 @@ func main() {
 
 	router.GET("/", welcome)
 
-	router.POST("/saga", processSaga)
-	router.POST("/saga/cluster/:request", newSaga)
+	router.POST("/saga/:request", processSaga)
+	router.POST("/cluster/:request", newSaga)
 	router.PUT("/saga/partial", partialRequestResponse)
 	router.PUT("/saga/elect/:request", voteAbort)
 	router.DELETE("/saga/:request", delSaga)
@@ -61,10 +62,13 @@ func updateCoordinatorsList() {
 	for {
 		time.Sleep(pollFrequency * time.Millisecond)
 
-		coordinators = pullCoordinators()
-		// update ring
-		ring = hashring.New(coordinators)
-		checkIfNewLeader()
+		newCoordinators := pullCoordinators()
+		if !reflect.DeepEqual(newCoordinators, coordinators) {
+			// update ring
+			coordinators = newCoordinators
+			ring = hashring.New(coordinators)
+			checkIfNewLeader()
+		}
 	}
 }
 
